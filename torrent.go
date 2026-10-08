@@ -126,6 +126,9 @@ type Torrent struct {
 	fileSegmentsIndex g.Option[segments.Index]
 
 	_chunksPerRegularPiece chunkIndexType
+	// Info.NumPieces walks the whole file tree of a v2 torrent on every call, and
+	// the webseed request loop asks for it constantly.
+	_numPieces pieceIndex
 
 	webSeeds map[webseedUrlKey]*webseedPeer
 	// Active peer connections, running message stream loops. TODO: Make this open (not-closed)
@@ -433,7 +436,7 @@ func (t *Torrent) metadataSize() int {
 }
 
 func (t *Torrent) makePieces() {
-	t.pieces = make([]pieceState, t.info.NumPieces())
+	t.pieces = make([]pieceState, t.numPieces())
 	files := *t.files
 	for i := range t.pieces {
 		// The hash and end file index are derived on demand from the info and the following piece, so
@@ -538,6 +541,7 @@ func (t *Torrent) setInfo(info *metainfo.Info) error {
 		}
 	}
 	t.nameMu.Lock()
+	t._numPieces = info.NumPieces()
 	t.info = info
 	panicif.True(t.fileSegmentsIndex.Set(info.FileSegmentsIndex()).Ok)
 	t.getInfoCtxCancel(errors.New("got info"))
@@ -1088,7 +1092,7 @@ func (t *Torrent) usualPieceSize() int {
 }
 
 func (t *Torrent) numPieces() pieceIndex {
-	return t.info.NumPieces()
+	return t._numPieces
 }
 
 func (t *Torrent) numPiecesCompleted() (num pieceIndex) {
@@ -1684,8 +1688,8 @@ func (t *Torrent) byteRegionPieces(off, size int64) (begin, end pieceIndex) {
 	}
 	begin = pieceIndex(off / t.info.PieceLength)
 	end = pieceIndex((off + size + t.info.PieceLength - 1) / t.info.PieceLength)
-	if end > t.info.NumPieces() {
-		end = t.info.NumPieces()
+	if end > t.numPieces() {
+		end = t.numPieces()
 	}
 	return
 }
