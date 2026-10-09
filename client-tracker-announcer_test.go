@@ -3,6 +3,8 @@
 package torrent
 
 import (
+	"encoding/binary"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/go-quicktest/qt"
 
 	"github.com/anacrolix/torrent/metainfo"
+	"github.com/anacrolix/torrent/tracker"
 	infohash_v2 "github.com/anacrolix/torrent/types/infohash-v2"
 )
 
@@ -80,4 +83,74 @@ func TestUpdateOverdueRecursion(t *testing.T) {
 		// updateOverdue we can test for thrashing, but it's non-trivial.
 		d.updateOverdue()
 	})
+}
+
+// A dispatcher with numTorrents infohashes announcing to each of numTrackers trackers.
+func newTestDispatcher(tb testing.TB, numTorrents, numTrackers int) *regularTrackerAnnounceDispatcher {
+	cl := newTestingClient(tb)
+	d := &regularTrackerAnnounceDispatcher{}
+	d.initTables()
+	d.initTimerNoop()
+	d.logger = slog.Default()
+	for tr := range numTrackers {
+		u, _ := url.Parse(fmt.Sprintf("http://tracker%d.example", tr))
+		d.initTrackerClient(u, trackerAnnouncerKey(u.String()), cl.config, slog.Default())
+	}
+	when := time.Now().Add(-time.Minute)
+	for ih := range numTorrents {
+		for tr := range numTrackers {
+			var key torrentTrackerAnnouncerKey
+			binary.BigEndian.PutUint32(key.ShortInfohash[:], uint32(ih)+1)
+			key.url = trackerAnnouncerKey(fmt.Sprintf("http://tracker%d.example", tr))
+			var input nextAnnounceInput
+			input.When = when
+			input.AnnounceEvent = tracker.Started
+			panicif.False(d.announceData.Create(key, input))
+		}
+	}
+	return d
+}
+
+func TestInfohashBusyFollowsAnnounceConcurrency(t *testing.T) {
+	d := newTestDispatcher(t, 2, 3)
+	var ih shortInfohash
+	binary.BigEndian.PutUint32(ih[:], 1)
+	busyRows := func() (n int) {
+		for p := range d.announceData.Iter {
+			if p.Right.infohashBusy {
+				qt.Assert(t, qt.Equals(p.Left.ShortInfohash, ih))
+				n++
+			}
+		}
+		return
+	}
+	add := func(delta int) {
+		d.alterInfohashConcurrency(ih, func(n int) int { return n + delta })
+	}
+	add(1)
+	qt.Check(t, qt.Equals(busyRows(), 3))
+	add(1)
+	qt.Check(t, qt.Equals(busyRows(), 3))
+	add(-1)
+	qt.Check(t, qt.Equals(busyRows(), 3))
+	add(-1)
+	qt.Check(t, qt.Equals(busyRows(), 0))
+}
+
+// Each torrent announces to all its trackers at once, as a newly added torrent does, and the
+// announces finish one after the other.
+func BenchmarkInfohashAnnounceConcurrency(b *testing.B) {
+	const numTorrents, numTrackers = 250, 40
+	d := newTestDispatcher(b, numTorrents, numTrackers)
+	b.ResetTimer()
+	for i := range b.N {
+		var ih shortInfohash
+		binary.BigEndian.PutUint32(ih[:], uint32(i%numTorrents)+1)
+		for range numTrackers {
+			d.alterInfohashConcurrency(ih, func(n int) int { return n + 1 })
+		}
+		for range numTrackers {
+			d.alterInfohashConcurrency(ih, func(n int) int { return n - 1 })
+		}
+	}
 }
