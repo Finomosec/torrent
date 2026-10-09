@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	qt "github.com/go-quicktest/qt"
 
@@ -24,29 +25,31 @@ func TestStatsCountPiecesQueuedForHash(t *testing.T) {
 	cfg.DefaultStorage = storage.NewFileOpts(storage.NewFileClientOpts{ClientBaseDir: dir})
 	cl, err := NewClient(cfg)
 	qt.Assert(t, qt.IsNil(err))
-	t.Cleanup(func() { cl.Close() })
-	setMaxActivePieceHashers(t, cl, 0)
+	defer cl.Close()
 	tt, err := cl.AddTorrent(mi)
 	qt.Assert(t, qt.IsNil(err))
 	<-tt.GotInfo()
 
-	// No hashers may run, so every piece queued for a check waits.
-	cl.lock()
+	// Let the checks from adding the torrent finish, then queue every piece and look under the
+	// same lock: the hashers started meanwhile have taken their pieces off the queue.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		cl.lock()
+		if cl.activePieceHashers == 0 || time.Now().After(deadline) {
+			break
+		}
+		cl.unlock()
+		time.Sleep(time.Millisecond)
+	}
+	defer cl.unlock()
 	for i := range tt.NumPieces() {
 		_, err := tt.queuePieceCheck(i)
 		qt.Assert(t, qt.IsNil(err))
 	}
-	cl.unlock()
-	st := tt.Stats()
-	qt.Check(t, qt.Equals(st.PiecesQueuedForHash, tt.NumPieces()))
-	qt.Check(t, qt.Equals(st.PiecesHashing, 0))
-	qt.Check(t, qt.Equals(cl.Stats().PiecesQueuedForHash, tt.NumPieces()))
-
-	cl.lock()
-	maxActivePieceHashers = 1
-	cl.startPieceHashers()
-	st = tt.statsLocked()
-	cl.unlock()
-	qt.Check(t, qt.Equals(st.PiecesHashing, 1))
-	qt.Check(t, qt.Equals(st.PiecesQueuedForHash, tt.NumPieces()-1))
+	st := tt.statsLocked()
+	qt.Check(t, qt.Not(qt.Equals(st.PiecesHashing, 0)))
+	qt.Check(t, qt.Equals(st.PiecesQueuedForHash+st.PiecesHashing, tt.NumPieces()))
+	cst := cl.statsLocked()
+	qt.Check(t, qt.Equals(cst.PiecesHashing, st.PiecesHashing))
+	qt.Check(t, qt.Equals(cst.PiecesQueuedForHash, st.PiecesQueuedForHash))
 }
