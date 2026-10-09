@@ -511,6 +511,11 @@ func (cl *Client) iterCurrentWebseedRequestsFromClient() iter.Seq2[webseedUnique
 			if _, live := cl.torrents[key.t]; !live {
 				continue
 			}
+			// The same holds for a web seed removed from a live torrent: its
+			// requests were cancelled when it closed.
+			if _, live := key.t.webSeeds[key.url]; !live {
+				continue
+			}
 			if !cl.yieldKeyAndValue(yield, key, ar) {
 				return
 			}
