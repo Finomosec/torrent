@@ -36,6 +36,9 @@ type TorrentGauges struct {
 	ConnectedSeeders int
 	HalfOpenPeers    int
 	PiecesComplete   int
+	// Pieces waiting to be hashed, and pieces being hashed right now.
+	PiecesQueuedForHash int
+	PiecesHashing       int
 }
 
 func (me *TorrentGauges) Add(agg TorrentGauges) {
