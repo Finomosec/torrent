@@ -3,6 +3,7 @@ package torrent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -69,6 +70,9 @@ func TestStatsCountPiecesMissingFromStorage(t *testing.T) {
 }
 
 func TestStatsCountPiecesThatCouldNotBeRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows doesn't take read permission from the mode bits")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root reads the file whatever its mode")
 	}
