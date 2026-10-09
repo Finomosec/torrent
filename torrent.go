@@ -3189,8 +3189,7 @@ func (t *Torrent) AddWebSeeds(urls []string, opts ...AddWebSeedsOpt) {
 }
 
 // RemoveWebSeeds closes the torrent's web seeds and forgets them, cancelling
-// what they have in flight. AddWebSeeds brings them back. For a torrent that
-// only seeds again, they would otherwise stay around for nothing.
+// what they have in flight. AddWebSeeds brings them back.
 func (t *Torrent) RemoveWebSeeds() {
 	t.cl.lock()
 	defer t.cl.unlock()
