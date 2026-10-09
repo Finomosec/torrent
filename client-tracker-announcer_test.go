@@ -85,8 +85,14 @@ func TestUpdateOverdueRecursion(t *testing.T) {
 	})
 }
 
-// A dispatcher with numTorrents infohashes announcing to each of numTrackers trackers.
+// A dispatcher with numTorrents infohashes announcing to each of numTrackers trackers, all due.
 func newTestDispatcher(tb testing.TB, numTorrents, numTrackers int) *regularTrackerAnnounceDispatcher {
+	return newTestDispatcherDue(tb, numTorrents, numTrackers, numTrackers)
+}
+
+// Like newTestDispatcher, but only the first dueTrackers are due; the rest wait, as failing
+// trackers do in their backoff.
+func newTestDispatcherDue(tb testing.TB, numTorrents, numTrackers, dueTrackers int) *regularTrackerAnnounceDispatcher {
 	cl := newTestingClient(tb)
 	d := &regularTrackerAnnounceDispatcher{}
 	d.initTables()
@@ -96,14 +102,16 @@ func newTestDispatcher(tb testing.TB, numTorrents, numTrackers int) *regularTrac
 		u, _ := url.Parse(fmt.Sprintf("http://tracker%d.example", tr))
 		d.initTrackerClient(u, trackerAnnouncerKey(u.String()), cl.config, slog.Default())
 	}
-	when := time.Now().Add(-time.Minute)
 	for ih := range numTorrents {
 		for tr := range numTrackers {
 			var key torrentTrackerAnnouncerKey
 			binary.BigEndian.PutUint32(key.ShortInfohash[:], uint32(ih)+1)
 			key.url = trackerAnnouncerKey(fmt.Sprintf("http://tracker%d.example", tr))
 			var input nextAnnounceInput
-			input.When = when
+			input.When = time.Now().Add(-time.Minute)
+			if tr >= dueTrackers {
+				input.When = time.Now().Add(time.Hour)
+			}
 			input.AnnounceEvent = tracker.Started
 			panicif.False(d.announceData.Create(key, input))
 		}
@@ -135,6 +143,40 @@ func TestInfohashBusyFollowsAnnounceConcurrency(t *testing.T) {
 	qt.Check(t, qt.Equals(busyRows(), 3))
 	add(-1)
 	qt.Check(t, qt.Equals(busyRows(), 0))
+}
+
+func TestInfohashBusyReachesWaitingRowsWhenTheyChange(t *testing.T) {
+	d := newTestDispatcherDue(t, 1, 3, 1)
+	var ih shortInfohash
+	binary.BigEndian.PutUint32(ih[:], 1)
+	busy := func(tr int) bool {
+		key := torrentTrackerAnnouncerKey{ShortInfohash: ih, url: trackerAnnouncerKey(fmt.Sprintf("http://tracker%d.example", tr))}
+		v, ok := d.announceData.Get(key)
+		qt.Assert(t, qt.IsTrue(ok))
+		return v.infohashBusy
+	}
+	d.alterInfohashConcurrency(ih, func(n int) int { return n + 1 })
+	qt.Check(t, qt.IsTrue(busy(0)))
+	qt.Check(t, qt.IsFalse(busy(1)), qt.Commentf("a waiting row is not reindexed"))
+	key := torrentTrackerAnnouncerKey{ShortInfohash: ih, url: "http://tracker1.example"}
+	d.announceData.Update(key, func(v nextAnnounceInput) nextAnnounceInput {
+		v.When = time.Now().Add(-time.Second)
+		return v
+	})
+	qt.Check(t, qt.IsTrue(busy(1)), qt.Commentf("a row that becomes due takes up busy"))
+}
+
+// Most trackers of a torrent fail and wait in their backoff; only a few are due.
+func BenchmarkInfohashAnnounceConcurrencyMostWaiting(b *testing.B) {
+	const numTorrents, numTrackers, dueTrackers = 250, 40, 4
+	d := newTestDispatcherDue(b, numTorrents, numTrackers, dueTrackers)
+	b.ResetTimer()
+	for i := range b.N {
+		var ih shortInfohash
+		binary.BigEndian.PutUint32(ih[:], uint32(i%numTorrents)+1)
+		d.alterInfohashConcurrency(ih, func(n int) int { return n + 1 })
+		d.alterInfohashConcurrency(ih, func(n int) int { return n - 1 })
+	}
 }
 
 // Each torrent announces to all its trackers at once, as a newly added torrent does, and the

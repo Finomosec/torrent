@@ -100,6 +100,7 @@ func (me *regularTrackerAnnounceDispatcher) initTables() {
 		func(old, new g.Option[announceDataRow]) g.Option[announceDataRow] {
 			if new.Ok {
 				new.Value.Right.overdue = new.Value.Right.When.Compare(time.Now()) <= 0
+				new.Value.Right.infohashBusy = me.infohashBusy(new.Value.Left.ShortInfohash)
 			}
 			return new
 		})
@@ -185,7 +186,6 @@ func (me *regularTrackerAnnounceDispatcher) initTables() {
 		start := me.announceData.MinRecord()
 		start.Left.ShortInfohash = shortIh
 		keys := make([]torrentTrackerAnnouncerKey, 0, len(me.trackerClients))
-		var expectedBusy g.Option[bool]
 		for r := range indexed.IterClusteredWhere(
 			me.announceData,
 			start,
@@ -193,12 +193,9 @@ func (me *regularTrackerAnnounceDispatcher) initTables() {
 				return p.Left.ShortInfohash == shortIh
 			},
 		) {
-			if expectedBusy.Ok {
-				panicif.NotEq(r.Right.infohashBusy, expectedBusy.Value)
-			} else {
-				expectedBusy.Set(r.Right.infohashBusy)
-			}
-			if r.Right.infohashBusy != busy {
+			// Busy only orders rows that are due and waiting. The rest are ordered by When, and
+			// pick up busy in the insteadOf above whenever they change, at the latest when due.
+			if r.Right.overdue && !r.Right.active && r.Right.infohashBusy != busy {
 				keys = append(keys, r.Left)
 			}
 		}
