@@ -2470,6 +2470,8 @@ func (t *Torrent) gauges() (ret TorrentGauges) {
 		}
 	}
 	ret.PiecesComplete = t.numPiecesCompleted()
+	ret.PiecesQueuedForHash = int(t.piecesQueuedForHash.GetCardinality())
+	ret.PiecesHashing = t.activePieceHashes
 	return
 }
 
