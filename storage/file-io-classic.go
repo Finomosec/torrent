@@ -156,8 +156,7 @@ func (c classicFileReader) writeToN(w io.Writer, n int64) (written int64, err er
 		w:   w,
 	}
 	written, err = c.File.WriteTo(&lw)
-	// The file goes on past the n bytes asked for, so the limit cut the copy short. That is the
-	// intended end, not a failed write.
+	// The limit stops the copy at n bytes; that is not a failed write.
 	if errors.Is(err, io.ErrShortWrite) && lw.rem == 0 {
 		err = nil
 	}
