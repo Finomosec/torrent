@@ -51,4 +51,8 @@ func (me *TorrentGauges) Add(agg TorrentGauges) {
 
 type TorrentStatCounters struct {
 	BytesHashed Count
+	// Pieces whose hash check finished, by outcome. Unlike ConnStats.PiecesDirtied*, these include
+	// pieces checked from storage without any peer involved.
+	PiecesHashedGood Count
+	PiecesHashedBad  Count
 }

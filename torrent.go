@@ -1245,6 +1245,16 @@ func (t *Torrent) countBytesHashed(n int64) {
 	t.cl.counters.BytesHashed.Add(n)
 }
 
+func (t *Torrent) countPieceHashed(passed bool) {
+	if passed {
+		t.counters.PiecesHashedGood.Add(1)
+		t.cl.counters.PiecesHashedGood.Add(1)
+	} else {
+		t.counters.PiecesHashedBad.Add(1)
+		t.cl.counters.PiecesHashedBad.Add(1)
+	}
+}
+
 func (t *Torrent) hashPiece(piece pieceIndex) (
 	correct bool,
 	// These are peers that sent us blocks that differ from what we hash here. TODO: Track Peer not
@@ -2630,6 +2640,7 @@ func (t *Torrent) pieceHashed(piece pieceIndex, passed bool, hashIoErr error) {
 	s := p.state()
 	s.numVerifies++
 	s.numVerifiesCond.Broadcast()
+	t.countPieceHashed(passed)
 	t.cl.event.Broadcast()
 	if t.closed.IsSet() {
 		return
